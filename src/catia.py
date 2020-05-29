@@ -155,6 +155,7 @@ class CatiaMainW(AbstractCanvasJackClass):
         pFeatures = patchcanvas.features_t()
         pFeatures.group_info   = False
         pFeatures.group_rename = False
+        pFeatures.group_go_to_app = self.fSavedSettings["Main/RaySessionSync"]
         pFeatures.port_info    = True
         pFeatures.port_rename  = bool(self.fSavedSettings["Main/JackPortAlias"] > 0)
         pFeatures.handle_group_pos = True
@@ -700,7 +701,7 @@ class CatiaMainW(AbstractCanvasJackClass):
         groupId    = self.fLastGroupId
         groupSplit = patchcanvas.SPLIT_UNDEF
         groupIcon  = patchcanvas.ICON_APPLICATION
-
+              
         if ret == 0:
             iconName = voidptr2str(data)
             jacklib.free(data)
@@ -1306,6 +1307,7 @@ class CatiaMainW(AbstractCanvasJackClass):
             pFeatures.port_info    = True
             pFeatures.port_rename  = bool(self.fSavedSettings["Main/JackPortAlias"] > 0)
             pFeatures.handle_group_pos = True
+            pFeatures.group_go_to_app = self.fSavedSettings["Main/RaySessionSync"]
 
             patchcanvas.setOptions(pOptions)
             patchcanvas.setFeatures(pFeatures)
@@ -1350,6 +1352,7 @@ class CatiaMainW(AbstractCanvasJackClass):
 
         self.fSavedSettings = {
             "Main/RefreshInterval": settings.value("Main/RefreshInterval", 120, type=int),
+            "Main/RaySessionSync": settings.value("Main/RaySessionSync", True, type=bool),
             "Main/JackPortAlias": settings.value("Main/JackPortAlias", 2, type=int),
             "Canvas/Theme": settings.value("Canvas/Theme", patchcanvas.getDefaultThemeName(), type=str),
             "Canvas/AutoHideGroups": settings.value("Canvas/AutoHideGroups", False, type=bool),
@@ -1372,6 +1375,7 @@ class CatiaMainW(AbstractCanvasJackClass):
     def closeEvent(self, event):
         self.saveSettings()
         patchcanvas.clear()
+        
         QMainWindow.closeEvent(self, event)
 
 # ------------------------------------------------------------------------------------------------------------

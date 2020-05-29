@@ -39,6 +39,8 @@ else:
 # Imports (Theme)
 from patchcanvas_theme import *
 
+from properties_helper import GroupPropertiesHelper
+
 # ------------------------------------------------------------------------------
 # patchcanvas-api.h
 
@@ -102,6 +104,7 @@ class features_t(object):
     __slots__ = [
         'group_info',
         'group_rename',
+        'group_go_to_app',
         'port_info',
         'port_rename',
         'handle_group_pos'
@@ -213,6 +216,15 @@ class CanvasObject(QObject):
 
         CanvasCallback(ACTION_PORTS_DISCONNECT, connectionId, 0, "")
 
+    @pyqtSlot()
+    def GroupContextMenuGoToApp(self):
+        try:
+            el = self.sender().data()
+            propertiesHelper.loadOrSwitchToApp(el['jackclientname'], el['winid'])
+        except:
+            pass
+
+
 # Global objects
 canvas = Canvas()
 canvas.qobject    = None
@@ -234,9 +246,12 @@ options.eyecandy     = EYECANDY_SMALL
 features = features_t()
 features.group_info   = False
 features.group_rename = False
+features.group_go_to_app = False
 features.port_info    = False
 features.port_rename  = False
 features.handle_group_pos = False
+
+propertiesHelper = GroupPropertiesHelper(Debug=True)
 
 # Internal functions
 def bool2str(check):
@@ -299,6 +314,7 @@ def setFeatures(new_features):
     if canvas.initiated: return
     features.group_info   = new_features.group_info
     features.group_rename = new_features.group_rename
+    features.group_go_to_app = new_features.group_go_to_app
     features.port_info    = new_features.port_info
     features.port_rename  = new_features.port_rename
     features.handle_group_pos = new_features.handle_group_pos
@@ -339,19 +355,21 @@ def init(appName, scene, callback, debug=False):
 
     if not canvas.theme:
         canvas.theme = Theme(getDefaultTheme())
-
+    
     canvas.scene.updateTheme()
-
+    
     canvas.initiated = True
+    
 
 def clear():
     if canvas.debug:
         qDebug("PatchCanvas::clear()")
 
+    propertiesHelper.stop()
     group_list_ids = []
     port_list_ids  = []
     connection_list_ids = []
-
+    
     for group in canvas.group_list:
         group_list_ids.append(group.group_id)
 
@@ -395,7 +413,7 @@ def setCanvasSize(x, y, width, height):
     canvas.size_rect.setX(x)
     canvas.size_rect.setY(y)
     canvas.size_rect.setWidth(width)
-    canvas.size_rect.setHeight(height)
+    canvas.size_rect.setHeight(height)  
 
 def addGroup(group_id, group_name, split=SPLIT_UNDEF, icon=ICON_APPLICATION):
     if canvas.debug:
@@ -525,6 +543,7 @@ def renameGroup(group_id, new_group_name):
             return
 
     qCritical("PatchCanvas::renameGroup(%i, %s) - unable to find group to rename" % (group_id, new_group_name.encode()))
+
 
 def splitGroup(group_id):
     if canvas.debug:
@@ -766,6 +785,32 @@ def addPort(group_id, port_id, port_name, port_mode, port_type):
     box_widget.updatePositions()
 
     QTimer.singleShot(0, canvas.scene.update)
+
+def hidePort(port_id):
+    if canvas.debug:
+        qDebug("PatchCanvas::hidePort(%i)" % port_id)
+
+    for port in canvas.port_list:
+        if port.port_id == port_id:
+            port.widget.setVisible(False)
+            QTimer.singleShot(0, canvas.scene.update)
+            return
+
+    qCritical("PatchCanvas::hiePort(%i) - Unable to find port to remove" % port_id)
+
+def showPort(port_id):
+    if canvas.debug:
+        qDebug("PatchCanvas::showPort(%i)" % port_id)
+
+    for port in canvas.port_list:
+        if port.port_id == port_id:
+            port.widget.setVisible(True)
+            QTimer.singleShot(0, canvas.scene.update)
+            return
+
+    qCritical("PatchCanvas::showPort(%i) - Unable to find port to remove" % port_id)
+
+
 
 def removePort(port_id):
     if canvas.debug:
@@ -1826,13 +1871,13 @@ class CanvasPort(QGraphicsItem):
         else:
             act_x_disc = discMenu.addAction("No connections")
             act_x_disc.setEnabled(False)
-
+          
         menu.addMenu(discMenu)
         act_x_disc_all = menu.addAction("Disconnect &All")
         act_x_sep_1 = menu.addSeparator()
         act_x_info = menu.addAction("Get &Info")
         act_x_rename = menu.addAction("&Rename")
-
+        
         if not features.port_info:
             act_x_info.setVisible(False)
 
@@ -2368,11 +2413,36 @@ class CanvasBox(QGraphicsItem):
             act_x_disc = discMenu.addAction("No connections")
             act_x_disc.setEnabled(False)
 
+        groupName = CanvasGetGroupName(self.m_group_id)
+          
+        windowtitle_list = propertiesHelper.getWinIdsAndtitles(groupName)
+        if len(windowtitle_list) > 1:
+          goToWindowMenu = QMenu("Go to app", menu)
+          
+          for el in windowtitle_list:
+            act_x_go_to_app = goToWindowMenu.addAction(el['title'])
+            act_x_go_to_app.setData({'jackclientname':groupName, 'winid': el['winid']})
+            act_x_go_to_app.triggered.connect(canvas.qobject.GroupContextMenuGoToApp)
+
+
+
         menu.addMenu(discMenu)
         act_x_disc_all = menu.addAction("Disconnect &All")
         act_x_sep1 = menu.addSeparator()
         act_x_info = menu.addAction("&Info")
         act_x_rename = menu.addAction("&Rename")
+
+        if len(windowtitle_list) == 1:
+          el = windowtitle_list[0]
+          act_x_go_to_app = menu.addAction("&Go to app")
+          act_x_go_to_app.setData({'jackclientname':groupName, 'winid': el['winid']})
+          act_x_go_to_app.triggered.connect(canvas.qobject.GroupContextMenuGoToApp)
+        elif len(windowtitle_list) > 1:
+          menu.addMenu(goToWindowMenu)
+        elif len(windowtitle_list) == 0:
+          act_x_go_to_app = menu.addAction("No app associated")
+          act_x_go_to_app.setEnabled(False)
+        
         act_x_sep2 = menu.addSeparator()
         act_x_split_join = menu.addAction("Join" if self.m_splitted else "Split")
 
@@ -2384,7 +2454,10 @@ class CanvasBox(QGraphicsItem):
 
         if not (features.group_info and features.group_rename):
             act_x_sep1.setVisible(False)
-
+        
+        if not (features.group_go_to_app):
+            act_x_go_to_app.setVisible(False)
+        
         haveIns = haveOuts = False
         for port in canvas.port_list:
             if port.port_id in self.m_port_list_ids:
@@ -2416,7 +2489,7 @@ class CanvasBox(QGraphicsItem):
                 canvas.callback(ACTION_GROUP_JOIN, self.m_group_id, 0, "")
             else:
                 canvas.callback(ACTION_GROUP_SPLIT, self.m_group_id, 0, "")
-
+        
         event.accept()
 
     def mousePressEvent(self, event):
