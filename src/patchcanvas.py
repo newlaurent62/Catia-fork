@@ -65,7 +65,7 @@ ACTION_PORT_INFO        = 4 # port_id, N, N
 ACTION_PORT_RENAME      = 5 # port_id, N, new_name
 ACTION_PORTS_CONNECT    = 6 # out_id, in_id, N
 ACTION_PORTS_DISCONNECT = 7 # conn_id, N, N
-
+ACTION_GROUP_LAYER      = 8 # layer_name, group_id, N
 # Icon
 ICON_APPLICATION = 0
 ICON_HARDWARE    = 1
@@ -105,6 +105,7 @@ class features_t(object):
         'group_info',
         'group_rename',
         'group_go_to_app',
+        'layer',
         'port_info',
         'port_rename',
         'handle_group_pos'
@@ -127,11 +128,17 @@ class group_dict_t(object):
     __slots__ = [
         'group_id',
         'group_name',
+        'layer_name',
         'split',
         'icon',
         'widgets'
     ]
 
+class layer_dict_t(object):
+    __slots__ = [
+      'layer_name'  # must be uniq
+    ]
+    
 class port_dict_t(object):
     __slots__ = [
         'group_id',
@@ -167,6 +174,8 @@ class Canvas(object):
         'initial_pos',
         'size_rect',
         'group_list',
+        'layer_list',
+        'current_layer_name',
         'port_list',
         'connection_list',
         'animation_list',
@@ -224,6 +233,14 @@ class CanvasObject(QObject):
         except:
             pass
 
+    @pyqtSlot()
+    def LayerContextMenuSet(self):
+        try:
+            el = self.sender().data()
+            CanvasCallback(ACTION_SET_LAYER, el['layer_name'], el['group_id'], "")
+        except:
+            pass
+
 
 # Global objects
 canvas = Canvas()
@@ -232,6 +249,7 @@ canvas.settings   = None
 canvas.theme      = None
 canvas.initiated  = False
 canvas.group_list = []
+canvas.layer_list = []
 canvas.port_list  = []
 canvas.connection_list = []
 canvas.animation_list  = []
@@ -369,7 +387,11 @@ def clear():
     group_list_ids = []
     port_list_ids  = []
     connection_list_ids = []
+    layer_list_ids = []
     
+    for layer in canvas.layer_list:
+        layer_list_ids.append(layer.layer_name)
+
     for group in canvas.group_list:
         group_list_ids.append(group.group_id)
 
@@ -388,9 +410,13 @@ def clear():
     for idx in group_list_ids:
         removeGroup(idx)
 
+    for idx in layer_list_ids:
+        removeLayer(idx)
+
     canvas.last_z_value = 0
     canvas.last_connection_id = 0
 
+    canvas.layer_list = []
     canvas.group_list = []
     canvas.port_list = []
     canvas.connection_list = []
@@ -413,7 +439,88 @@ def setCanvasSize(x, y, width, height):
     canvas.size_rect.setX(x)
     canvas.size_rect.setY(y)
     canvas.size_rect.setWidth(width)
-    canvas.size_rect.setHeight(height)  
+    canvas.size_rect.setHeight(height)
+
+def addLayer(layer_name):
+    if canvas.debug:
+        qDebug("PatchCanvas::addLayer(%i, %s)" % (layer_name, layer_name.encode()))
+
+    for layer in canvas.layer_list:
+        if layer.layer_name == layer_name:
+            qWarning("PatchCanvas::addLayer(%i, %s) - layer already exists." % (layer_name.encode()))
+            return
+  
+    layer_dict = layer_dict_t()
+    layer_dict.layer_name = layer_name
+    
+    canvas.layer_list.append(layer_dict)
+    
+def removeLayer(layer_name):
+    if canvas.debug:
+        qDebug("PatchCanvas::removeLayer(%i)" % (layer_name))
+
+    for group in canvas.group_list:
+        group.layer_name = None
+  
+    for layer in canvas.layer_list:
+        if layer.layer_name == layer_name:
+          layertoremove = layer
+  
+    if canvas.current_layer_name == layer_name:
+      canvas.current_layer_name = None
+      
+    canvas.layer_list.remove(layertoremove)
+
+def showLayer(layer_name):
+    if canvas.debug:
+        qDebug("PatchCanvas::showLayer(%i)" % (layer_name))
+    
+    found = False
+    for group in canvas.group_list:
+        if layer_name == propertiesHelper.getProperty(group.group_name, 'layer'):
+            showGroup(group.group_id)
+            found = True
+            break
+
+    if not found:
+      qWarning("PatchCanvas::showLayer(%i) - no group in the layer" % (layer_name))
+      
+    QTimer.singleShot(0, canvas.scene.update)
+
+def hideLayer(layer_name):
+    if canvas.debug:
+        qDebug("PatchCanvas::hideLayer(%i)" % (layer_name))
+    
+    found = False
+    for group in canvas.group_list:
+        if layer_name == propertiesHelper.getProperty(group.group_name, 'layer'):
+            hideGroup(group.group_id)
+            found = True
+            break
+    
+    if not found:
+      qWarning("PatchCanvas::hideLayer(%i) - no group in the layer" % (layer_name))
+
+    QTimer.singleShot(0, canvas.scene.update)
+
+def setLayer(layer_name, group_id):
+    if canvas.debug:
+        qDebug("PatchCanvas::setLayer(%i,%i)" % (layer_name, group_id))
+    
+    found = False
+    for group in canvas.group_list:
+        if group_id == group.group_id:
+            if canvas.current_layer_name == group.layer_name:
+              hideGroup(group_id)
+            group.layer_name = layer_name
+            found = True
+            break
+    
+    if not found:
+      qWarning("PatchCanvas::setLayer(%i,%i) - no group in the layer" % (layer_name))
+
+    QTimer.singleShot(0, canvas.scene.update)
+  
 
 def addGroup(group_id, group_name, split=SPLIT_UNDEF, icon=ICON_APPLICATION):
     if canvas.debug:
@@ -432,6 +539,7 @@ def addGroup(group_id, group_name, split=SPLIT_UNDEF, icon=ICON_APPLICATION):
     group_dict = group_dict_t()
     group_dict.group_id = group_id
     group_dict.group_name = group_name
+    group_dict.layer_name = None
     group_dict.split = bool(split == SPLIT_YES)
     group_dict.icon = icon
     group_dict.widgets = [group_box, None]
@@ -543,6 +651,71 @@ def renameGroup(group_id, new_group_name):
             return
 
     qCritical("PatchCanvas::renameGroup(%i, %s) - unable to find group to rename" % (group_id, new_group_name.encode()))
+
+def hideGroup(group_id):
+    if canvas.debug:
+        qDebug("PatchCanvas::hideGroup(%i)" % group_id)
+
+    for group in canvas.group_list:
+        if group.group_id == group_id:
+            item = group.widgets[0]
+            break;
+          
+    if not item:
+      qCritical("PatchCanvas::hideGroup(%i) - unable to find group to hide" % group_id)
+
+    if group.split and group.widgets[1]:
+        group.widgets[1].setVisible(False)
+    
+    port_list_ids = list(item.getPortList())
+
+    for port in canvas.port_list:
+        if port.port_id in port_list_ids:
+          port.widget.setVisible(False)
+
+    for connection in canvas.connection_list:
+        if connection.port_out_id in port_list_ids or connection.port_in_id in port_list_ids:
+          connection.widget.setVisible(False)
+          
+    item.setVisible(False)
+    if group.widgets[1]:
+      group.widgets[1].setVisible(False)
+    
+    QTimer.singleShot(0, canvas.scene.update)
+    return
+
+def showGroup(group_id):
+    if canvas.debug:
+        qDebug("PatchCanvas::showGroup(%i)" % group_id)
+
+    for group in canvas.group_list:
+        if group.group_id == group_id:
+            item = group.widgets[0]
+            break;
+          
+    if not item:
+      qCritical("PatchCanvas::showGroup(%i) - unable to find group to hide" % group_id)
+
+    if group.split and group.widgets[1]:
+        group.widgets[1].setVisible(True)
+    
+    port_list_ids = list(item.getPortList())
+
+    for port in canvas.port_list:
+        if port.port_id in port_list_ids:
+          port.widget.setVisible(True)
+
+    for connection in canvas.connection_list:
+        if connection.port_out_id in port_list_ids or connection.port_in_id in port_list_ids:
+          connection.widget.setVisible(True)
+          
+    item.setVisible(False)
+    if group.widgets[1]:
+      group.widgets[1].setVisible(False)
+    
+    QTimer.singleShot(0, canvas.scene.update)
+    return
+
 
 
 def splitGroup(group_id):
@@ -962,6 +1135,18 @@ def updateZValues():
 
 # Extra Internal functions
 
+def CanvasGetLayerName(layer_name):
+    if canvas.debug:
+        qDebug("PatchCanvas::CanvasGetLayerName(%i)" % group_id)
+
+    for layer in canvas.layer_list:
+        if layer.layer_name == layer_name:
+            return layer.layer_name
+
+    qCritical("PatchCanvas::CanvasGetLayerName(%i) - unable to find layer" % group_id)
+    return ""
+
+
 def CanvasGetGroupName(group_id):
     if canvas.debug:
         qDebug("PatchCanvas::CanvasGetGroupName(%i)" % group_id)
@@ -1024,6 +1209,16 @@ def CanvasGetFullPortName(port_id):
 
     qCritical("PatchCanvas::CanvasGetFullPortName(%i) - unable to find port" % port_id)
     return ""
+
+def CanvasGetLayerList():
+    if canvas.debug:
+        qDebug("PatchCanvas::CanvasGetLayerList()")
+  
+    layer_list = []
+    for layer in canvas.layer_list:
+        layer_list.append(layer)
+    
+    return layer_list
 
 def CanvasGetPortConnectionList(port_id):
     if canvas.debug:
@@ -2414,6 +2609,20 @@ class CanvasBox(QGraphicsItem):
             act_x_disc.setEnabled(False)
 
         groupName = CanvasGetGroupName(self.m_group_id)
+
+        
+        layer_list = CanvasGetLayerList()
+        if len(layer_list) > 0:
+          setLayerMenu = QMenu("Set Layer", menu)
+          for i in range[len(layer_list)]:
+            act_x_set_layer = setLayerMenu.addAction(layer_list[i].layer_name)
+            act_x_set_layer.setData({'layer_name':layer_name,'group_id': self.m_group_id})
+            act_x_set_layer_triggered.connect(canvas.qobject.LayerContextMenuSet)
+            
+          act_x_set_layer = setLayerMenu.addAction('default')
+          act_x_set_layer.setData({'layer_name':None,'group_id': self.m_group_id})
+          act_x_set_layer_triggered.connect(canvas.qobject.LayerContextMenuSet)
+          
           
         windowtitle_list = propertiesHelper.getWinIdsAndtitles(groupName)
         if len(windowtitle_list) > 1:

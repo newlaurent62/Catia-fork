@@ -257,6 +257,11 @@ class CatiaMainW(AbstractCanvasJackClass):
             groupId = value1
             patchcanvas.splitGroup(groupId)
 
+        elif action == patchcanvas.ACTION_GROUP_SET_LAYER:
+            layerId = value1
+            groupId = value2
+            patchcanvas.setLayer(layerId, groupId)
+
         elif action == patchcanvas.ACTION_GROUP_JOIN:
             groupId = value1
             patchcanvas.joinGroup(groupId)
@@ -1308,6 +1313,7 @@ class CatiaMainW(AbstractCanvasJackClass):
             pFeatures.port_rename  = bool(self.fSavedSettings["Main/JackPortAlias"] > 0)
             pFeatures.handle_group_pos = True
             pFeatures.group_go_to_app = self.fSavedSettings["Main/RaySessionSync"]
+            pFeatures.layer = self.fSavedSettings["Main/RaySessionSync"]
 
             patchcanvas.setOptions(pOptions)
             patchcanvas.setFeatures(pFeatures)
