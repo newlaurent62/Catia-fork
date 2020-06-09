@@ -23,27 +23,24 @@ class GroupPropertiesHelper:
     self.lock = threading.Lock()
     sessionpath = None
     try:
+      # is there a raysession opened ?
       sessionpath = subprocess.check_output(['ray_control', 'get_session_path'], text=True)
+      # if yes we walk the dir searching for yml files
+      for root, dirs,files in os.walk(self._dir):  
+        for fname in files:
+          path = os.path.join(root, fname)
+          try:
+            if self.Debug:
+              print('%s reading' % path)
+            if path.endswith('.yml'):  
+              self.updateProperties(path)
+          except Exception as e:
+            print (e)
     except Exception as e:
       if self.Debug:
         print (e)
       print ('Do you opened a Raysession document ?')
-    
-    if sessionpath:
-      try:
-        pathlist = os.path.split(sessionpath)      
-        print (pathlist)
-        _file = self._dir + os.sep + os.path.basename(pathlist[len(pathlist)-1].strip()) + ".yml"
-        if os.path.isfile(_file):
-          if self.Debug:
-            print ('+ %s found.' % _file)
-          self.updateProperties(_file)                
-        else:
-          if self.Debug:
-            print ('- %s not found.' % _file)
-      except Exception as e:
-        print (e)
-        
+            
     self.eventStop = self.start(5)
 
   def start(self,interval):
@@ -89,25 +86,89 @@ class GroupPropertiesHelper:
     if self.Debug:
       print ('<==== GroupPropertiesHelper:: updateProperties')
     
-    with open(_file) as f:        
-      jackclients = {}
-      data = yaml.load(f, Loader=yaml.FullLoader)
-      sessionname = data['sessionname']
+    f = open(_file, "r")
+    jackclients = {}
+    data = yaml.load(f, Loader=yaml.FullLoader)
+    sessionname = data['sessionname']
+    port = int(data['port']) 
+    
+    if self.checkRaySessionPort(sessionname, port):        
       for el in data['jackclients']:
-        jackclients[el['name']] = {'name': el['name'], 'windowtitle':el['windowtitle'], 'layer': el['layer'], 'guitoload': el['guitoload'], 'sessionname': sessionname, 'clientid': el['clientid']}
+        if el['layer']:
+          el['sessionname'] = sessionname
+        else:
+          el['sessionname'] = None
+        jackclients[el['name']] = {'name': el['name'], 'windowtitle':el['windowtitle'], 'layer': el['layer'], 'guitoload': el['guitoload'], 'sessionname': el['sessionname'], 'clientid': el['clientid'], 'port' : port, 'clienttype': el['clienttype']}
         if el['layer'] not in self.layer_list:
           self.layer_list.append(el['layer'])
+      f.close()
+      # we don't remove the file in case of catia restart
+    else:
+      f.close()
+      os.remove(_file)
       
-      self.lock.acquire()
-      self.jackclients = jackclients      
-      if self.Debug:
-        print (self.jackclients)
-      self.lock.release()
+      
+    self.lock.acquire()
+    for name in jackclients:
+      if name not in self.jackclients:
+        self.jackclients[name] = jackclients[name]
+    if self.Debug:
+      print (self.jackclients)
+    self.lock.release()
 
     if self.Debug:
       print ('>==== GroupPropertiesHelper:: updateProperties')
 
+  def checkRaySessionPort(self, sessionname, port):
+    cmd = ['ray_control','--port', str(port), 'get_session_path']
+    if self.Debug:
+      print(' '.join(cmd))
+    out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+    result = out.splitlines()[0]
+    return result.endswith(sessionname)
   
+  def __getPidFromRayControl(self, jackclientname):
+    
+    if jackclientname not in self.jackclients:
+      if self.Debug:
+        print ('jackclientname not registered in properties: %s' % jackclientname)
+      return 0
+    
+    port = self.jackclients[jackclientname]['port']
+    sessionname = self.jackclients[jackclientname]['sessionname']
+    clientid = self.jackclients[jackclientname]['clientid']
+    clienttype = self.jackclients[jackclientname]['clienttype']
+    
+    pid = 0
+    if clientid and port and clienttype:
+      cmd = ['ray_control','--port', str(port), 'client', '"' + clientid + '"', 'get_pid']
+      if self.Debug:
+        print(' '.join(cmd))
+      try:
+        out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+        result = out.splitlines()[0]
+        pid = int(result)
+        if self.Debug:
+          print ('ray pid: %d' % pid)
+      except Exception as e:
+        print (e)
+        pid = 0
+      if pid != 0 and clienttype == 'proxy':
+        try:
+          cmd = ['pgrep','-P', str(pid)]
+          out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+          result = out.splitlines()[0].split()
+          pid = int(result[0])
+          if self.Debug:
+            print ('proxy child pid: %d' % pid)
+        except:
+          print (e)
+          pid = 0
+    
+    if self.Debug:
+      print ('final pid: %d' % pid)
+    return pid
+
   def __getPidFromFile(self, jackclientname):
     
     if jackclientname not in self.jackclients:
@@ -180,22 +241,33 @@ class GroupPropertiesHelper:
     return result
   
   def get_property_unlock(self, jackclientname, propertyname):
+    # if the string ends with a number, its perhaps a pid number
+    candidatepid = 0
+    m = re.search(r'(\d+)$', jackclientname)
+    if m:
+      candidatepid = int(m.group(0))
+      nametosearch = jackclientname.replace(str(candidatepid),'xxx-PID-xxx')
+      if nametosearch in self.jackclients:
+        jackclientname = nametosearch
+        
     if propertyname == 'pid':
       # try to get pid from jacklib
       result = jack.client_pid(jackclientname)
-      # otherwise we get pid from pid file
+      # otherwise we get pid from pid Ray Control or from file
       if result == 0:
-        pidfromfile = self.__getPidFromFile(jackclientname)
-        result = int(pidfromfile)
+        result = self.__getPidFromRayControl(jackclientname)
+        if result == 0:
+          result = self.__getPidFromFile(jackclientname)
+        result = int(result)
       if self.Debug:
-        print ('%s: %d' % (propertyname, result))
+        print ('%s: %d (candidatepid: %d)' % (propertyname, result, candidatepid))
       return result
     
     result = None
     
     if jackclientname in self.jackclients and propertyname in self.jackclients[jackclientname]:
       result = self.jackclients[jackclientname][propertyname]
-    
+        
     if self.Debug:
       print ('%s: "%s"' % (propertyname, result))
     
@@ -270,23 +342,22 @@ class GroupPropertiesHelper:
 
     try:
       self.lock.acquire()
+            
+      windowtitle = self.get_property_unlock(jackclientname,'windowtitle')
+      guitoload = self.get_property_unlock(jackclientname,'guitoload')
+      layer = self.get_property_unlock(jackclientname,'layer')
+      pid = self.get_property_unlock(jackclientname, 'pid')
+      sessionname = self.get_property_unlock(jackclientname,'sessionname')      
       
-      if jackclientname in self.jackclients:
-        windowtitle = self.get_property_unlock(jackclientname,'windowtitle')
-        guitoload = self.get_property_unlock(jackclientname,'guitoload')
-        layer = self.get_property_unlock(jackclientname,'layer')
-        pid = self.get_property_unlock(jackclientname, 'pid')
-        sessionname = self.get_property_unlock(jackclientname,'sessionname')      
-        
-        if self.Debug:
-          print('--pid: %d\n--windowtitle:%s\n--guitoload:%s\n--layer:%s\n--sessionname:%s' % (pid,windowtitle,guitoload,layer,sessionname))
-        
-        if pid != 0 and windowtitle:
-          menuoptions = self.getWinIdsAndtitlesFromPid(pid, regexp=windowtitle)
-        elif pid != 0:
-          menuoptions = self.getWinIdsAndtitlesFromPid(pid)
-        elif pid == 0 and windowtitle:
-          menuoptions = self.getWinIdsAndtitlesFromRegexp(windowtitle)
+      if self.Debug:
+        print('--pid: %d\n--windowtitle:%s\n--guitoload:%s\n--layer:%s\n--sessionname:%s' % (pid,windowtitle,guitoload,layer,sessionname))
+      
+      if pid != 0 and windowtitle:
+        menuoptions = self.getWinIdsAndtitlesFromPid(pid, regexp=windowtitle)
+      elif pid != 0:
+        menuoptions = self.getWinIdsAndtitlesFromPid(pid)
+      elif pid == 0 and windowtitle:
+        menuoptions = self.getWinIdsAndtitlesFromRegexp(windowtitle)
     finally:
       self.lock.release()
 
