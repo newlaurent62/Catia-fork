@@ -153,7 +153,7 @@ class GroupPropertiesHelper:
       except Exception as e:
         print (e)
         pid = 0
-      if pid != 0 and clienttype == 'proxy':
+      if pid != 0 and (clienttype == 'proxy' or clienttype == 'proxy-wrapper'):
         try:
           cmd = ['pgrep','-P', str(pid)]
           out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
@@ -161,6 +161,13 @@ class GroupPropertiesHelper:
           pid = int(result[0])
           if self.Debug:
             print ('proxy child pid: %d' % pid)
+          if clienttype == 'proxy-wrapper':
+            cmd = ['pgrep','-P', str(pid)]
+            out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+            result = out.splitlines()[0].split()
+            pid = int(result[0])
+            if self.Debug:
+              print ('wrapper child pid: %d' % pid)
         except:
           print (e)
           pid = 0
