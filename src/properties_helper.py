@@ -9,6 +9,8 @@ import subprocess
 import shlex
 import jack
 import re
+from pathlib import Path
+import traceback
 
 class GroupPropertiesHelper:
   
@@ -25,17 +27,22 @@ class GroupPropertiesHelper:
     try:
       # is there a raysession opened ?
       sessionpath = subprocess.check_output(['ray_control', 'get_session_path'], text=True)
-      # if yes we walk the dir searching for yml files
-      for root, dirs,files in os.walk(self._dir):  
-        for fname in files:
-          path = os.path.join(root, fname)
-          try:
+      
+      # we list and sort files by modification date in the dirs
+      paths = sorted(Path(self._dir).iterdir(), key=os.path.getmtime)
+      for path in paths:  
+        try:
+          if str(path).endswith('.yml'):  
             if self.Debug:
-              print('%s reading' % path)
-            if path.endswith('.yml'):  
-              self.updateProperties(path)
-          except Exception as e:
-            print (e)
+              print('%s found' % path)
+            self.updateProperties(path)
+          if str(path).endswith('.session_closed'):
+            os.remove(str(path))
+            if self.Debug:
+              print('%s removed' % path)
+        except Exception as e:
+          traceback.print_exc()
+          print (e)
     except Exception as e:
       if self.Debug:
         print (e)
@@ -64,27 +71,28 @@ class GroupPropertiesHelper:
     now = dt.datetime.now()
     ago = now-dt.timedelta(seconds=5)
     
-    for root, dirs,files in os.walk(self._dir):  
-        for fname in files:
-            path = os.path.join(root, fname)
-            try:
-              st = os.stat(path)    
-              mtime = dt.datetime.fromtimestamp(st.st_mtime)
-              if mtime > ago and path.endswith('.yml'):
-                  if self.Debug:
-                    print('%s modified %s'%(path, mtime))
-                  self.updateProperties(path)                
-              if mtime > ago and path.endswith('.session_closed'):
-                  if self.Debug:
-                    print('%s modified %s'%(path, mtime))
-                  self.updateSessionClosed(path)                
-            except Exception as e:
-              print (e)
-              pass
+    paths = sorted(Path(self._dir).iterdir(), key=os.path.getmtime)
+    for path in paths:
+      try:
+        st = path.stat()    
+        mtime = dt.datetime.fromtimestamp(st.st_mtime)
+        if mtime > ago and str(path).endswith('.yml'):
+            if self.Debug:
+              print('%s modified %s'%(path, mtime))
+            self.updateProperties(path)                
+        if mtime > ago and str(path).endswith('.session_closed'):
+            if self.Debug:
+              print('%s modified %s'%(path, mtime))
+            self.updateSessionClosed(path)                
+      except Exception as e:
+        traceback.print_exc()
+        print (e)        
+        pass
             
   def updateProperties(self,_file):
     if self.Debug:
       print ('<==== GroupPropertiesHelper:: updateProperties')
+      print ('update properties from file %s' % _file)
     
     f = open(_file, "r")
     jackclients = {}
@@ -92,22 +100,45 @@ class GroupPropertiesHelper:
     sessionname = data['sessionname']
     port = int(data['port']) 
     
-    if self.checkRaySessionPort(sessionname, port):        
+    if self.checkRaySessionPort(sessionname, port):
+      if self.Debug:
+        print ('reading %s that is running on  port %d' % (sessionname, port)) 
+#        print (data['jackclients'])
       for el in data['jackclients']:
         if el['layer']:
           el['sessionname'] = sessionname
         else:
           el['sessionname'] = None
-        jackclients[el['name']] = {'name': el['name'], 'windowtitle':el['windowtitle'], 'layer': el['layer'], 'guitoload': el['guitoload'], 'sessionname': el['sessionname'], 'clientid': el['clientid'], 'port' : port, 'clienttype': el['clienttype']}
+        
+        if el['with_gui'] == 'True':
+          el['with_gui'] = True
+        else:
+          el['with_gui'] = False
+          
+        jackclients[el['name']] = {
+              'name': el['name'], 
+              'windowtitle':el['windowtitle'], 
+              'layer': el['layer'], 
+              'guitoload': el['guitoload'], 
+              'sessionname': el['sessionname'], 
+              'clientid': el['clientid'], 
+              'port': port, 
+              'clienttype': el['clienttype'],
+              'with_gui' : el['with_gui']
+        }
         if el['layer'] not in self.layer_list:
           self.layer_list.append(el['layer'])
       f.close()
       # we don't remove the file in case of catia restart
     else:
+      if self.Debug:
+        print ('The ray-daemon at port %d is not running on %s' % (port, sessionname))
       f.close()
       os.remove(_file)
       
-      
+    
+    if self.Debug:
+      print ('Updating ...')
     self.lock.acquire()
     for name in jackclients:
       if name not in self.jackclients:
@@ -352,18 +383,19 @@ class GroupPropertiesHelper:
             
       windowtitle = self.get_property_unlock(jackclientname,'windowtitle')
       guitoload = self.get_property_unlock(jackclientname,'guitoload')
+      with_gui = self.get_property_unlock(jackclientname,'with_gui')
       layer = self.get_property_unlock(jackclientname,'layer')
       pid = self.get_property_unlock(jackclientname, 'pid')
       sessionname = self.get_property_unlock(jackclientname,'sessionname')      
       
       if self.Debug:
-        print('--pid: %d\n--windowtitle:%s\n--guitoload:%s\n--layer:%s\n--sessionname:%s' % (pid,windowtitle,guitoload,layer,sessionname))
+        print('--pid: %d\n--windowtitle:%s\n--guitoload:%s\n--layer:%s\n--sessionname:%s\nwith_gui:%s\n' % (pid,windowtitle,guitoload,layer,sessionname, str(with_gui)))
       
-      if pid != 0 and windowtitle:
+      if with_gui and pid != 0 and windowtitle:
         menuoptions = self.getWinIdsAndtitlesFromPid(pid, regexp=windowtitle)
-      elif pid != 0:
+      elif with_gui and pid != 0:
         menuoptions = self.getWinIdsAndtitlesFromPid(pid)
-      elif pid == 0 and windowtitle:
+      elif not with_gui and windowtitle:
         menuoptions = self.getWinIdsAndtitlesFromRegexp(windowtitle)
     finally:
       self.lock.release()
