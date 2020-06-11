@@ -19,30 +19,14 @@ class GroupPropertiesHelper:
     if not(os.path.isdir(_dir)):
       os.makedirs(_dir)
     self._dir = _dir
+    self.session_path_by_port = {}
     self.jackclients = {}
     self.Debug = Debug
     self.layer_list = []
     self.lock = threading.Lock()
     sessionpath = None
-    try:
-      # is there a raysession opened ?
-      sessionpath = subprocess.check_output(['ray_control', 'get_session_path'], text=True)
-      
-      # we list and sort files by modification date in the dirs
-      paths = sorted(Path(self._dir).iterdir(), key=os.path.getmtime)
-      for path in paths:  
-        try:
-          if str(path).endswith('.yml'):  
-            if self.Debug:
-              print('%s found' % path)
-            self.updateProperties(path)
-          if str(path).endswith('.session_closed'):
-            os.remove(str(path))
-            if self.Debug:
-              print('%s removed' % path)
-        except Exception as e:
-          traceback.print_exc()
-          print (e)
+    try:      
+      self.read_dir()
     except Exception as e:
       if self.Debug:
         print (e)
@@ -68,81 +52,154 @@ class GroupPropertiesHelper:
     self.eventStop()
   
   def read_dir(self):
-    now = dt.datetime.now()
-    ago = now-dt.timedelta(seconds=5)
+    if self.Debug:
+      print ('<==== GroupPropertiesHelper:: read_dir')
+    portsToRemove = []
+    for port in self.session_path_by_port:
+      portsToRemove.append(port)
     
-    paths = sorted(Path(self._dir).iterdir(), key=os.path.getmtime)
-    for path in paths:
-      try:
-        st = path.stat()    
-        mtime = dt.datetime.fromtimestamp(st.st_mtime)
-        if mtime > ago and str(path).endswith('.yml'):
-            if self.Debug:
-              print('%s modified %s'%(path, mtime))
-            self.updateProperties(path)                
-        if mtime > ago and str(path).endswith('.session_closed'):
-            if self.Debug:
-              print('%s modified %s'%(path, mtime))
-            self.updateSessionClosed(path)                
-      except Exception as e:
-        traceback.print_exc()
-        print (e)        
-        pass
+    ports = self.get_list_daemons()
+    if ports:
+      for port in ports:
+        session_path = self.get_session_path(port)
+        if port not in self.session_path_by_port:
+          if session_path:
+            self.session_path_by_port[port] = session_path
+            self.updateProperties(port)
+            if port in portsToRemove:
+              portsToRemove.remove(port)
+        elif self.session_path_by_port[port] != session_path:
+          self.removeProperties(port)
+          if session_path:
+            self.session_path_by_port[port] = session_path
+            self.updateProperties(port)
+            if port in portsToRemove:
+              portsToRemove.remove(port)
+        elif self.session_path_by_port[port] == session_path:
+          if port in portsToRemove:
+            portsToRemove.remove(port)
+          
+    for port in portsToRemove:
+      self.removeProperties(port)
+
+    for port in portsToRemove:
+      del self.session_path_by_port[port]
+
+    if self.Debug:
+      print ('>==== GroupPropertiesHelper:: read_dir')
             
-  def updateProperties(self,_file):
+  def get_list_clients(self, port):
+    cmd = ['ray_control','--port', str(port), 'list_clients']
+    if self.Debug:
+      print(' '.join(cmd))
+    try:
+      out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+      result = out.splitlines()
+      return result
+    except Exception as e:
+      if self.Debug:
+        traceback.print_exc()
+        print (e)
+      return None
+
+  def get_custom_data(self, port, clientid, dataname, listtype=False, seperator="|"):
+    cmd = ['ray_control','--port', str(port), 'client', '"' + clientid + '"', 'get_custom_data', dataname]
+    if self.Debug:
+      print(' '.join(cmd))
+    try:
+      out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+      result = out.splitlines()[0]
+      if listtype:
+        return result.split(seperator)
+      return result
+    except Exception as e:
+      if self.Debug:
+        traceback.print_exc()
+        print (e)
+      return None
+    
+  def get_session_path(self, port):
+    try:
+      sessionpath = subprocess.check_output(['ray_control', '--port', str(port), 'get_session_path'], text=True)
+      return sessionpath.strip()
+    except Exception as e:
+      if self.Debug:
+        traceback.print_exc()
+        print (e)
+      return None
+
+  def get_list_daemons(self):
+    try:
+      ports = subprocess.check_output(['ray_control', 'list_daemons'], text=True)
+      listport = ports.split()
+      if self.Debug:
+        print (listport)
+      return listport
+    except Exception as e:
+      if self.Debug:
+        traceback.print_exc()
+        print (e)
+      return None
+
+  def get_session_name(self, port):
+    session_path = self.session_path_by_port[port]
+    return os.path.basename(os.path.normpath(session_path))
+  
+  def removeProperties(self, port):
+    if self.Debug:
+      print ('<==== GroupPropertiesHelper:: removeProperties port: %s' % port)
+
+    listToRemove = []
+    for jackname in self.jackclients:
+      if self.jackclients[jackname]['port'] == port:
+        listToRemove.append(jackname)
+
+    self.lock.acquire()
+    for jackname in listToRemove:
+      del self.jackclients[jackname]
+    self.lock.release()
+
+  def updateProperties(self,port):
     if self.Debug:
       print ('<==== GroupPropertiesHelper:: updateProperties')
-      print ('update properties from file %s' % _file)
+      print ('update properties for port %s session_path %s' % (str(port), self.session_path_by_port[port]))
     
-    f = open(_file, "r")
+    clientids = self.get_list_clients(port)
+    sessionname = self.get_session_name(port)
+
     jackclients = {}
-    data = yaml.load(f, Loader=yaml.FullLoader)
-    sessionname = data['sessionname']
-    port = int(data['port']) 
-    
-    if self.checkRaySessionPort(sessionname, port):
-      if self.Debug:
-        print ('reading %s that is running on  port %d' % (sessionname, port)) 
-#        print (data['jackclients'])
-      for el in data['jackclients']:
-        if el['layer']:
-          el['sessionname'] = sessionname
-        else:
-          el['sessionname'] = None
+    if clientids:
+      for clientid in clientids:
+        jacknames = self.get_custom_data(port, clientid, 'jacknames', seperator=';', listtype=True)
+        if jacknames:
+          layer = self.get_custom_data(port, clientid, 'layer')
+          with_gui = self.get_custom_data(port, clientid, 'with_gui')
+          windowtitle = self.get_custom_data(port, clientid, 'windowtitle')
+          guitoload = self.get_custom_data(port, clientid, 'guitoload')
+          clienttype = self.get_custom_data(port, clientid, 'clienttype')
         
-        if el['with_gui'] == 'True':
-          el['with_gui'] = True
-        else:
-          el['with_gui'] = False
-          
-        jackclients[el['name']] = {
-              'name': el['name'], 
-              'windowtitle':el['windowtitle'], 
-              'layer': el['layer'], 
-              'guitoload': el['guitoload'], 
-              'sessionname': el['sessionname'], 
-              'clientid': el['clientid'], 
-              'port': port, 
-              'clienttype': el['clienttype'],
-              'with_gui' : el['with_gui']
-        }
-        if el['layer'] not in self.layer_list:
-          self.layer_list.append(el['layer'])
-      f.close()
-      # we don't remove the file in case of catia restart
-    else:
-      if self.Debug:
-        print ('The ray-daemon at port %d is not running on %s' % (port, sessionname))
-      f.close()
-      os.remove(_file)
-      
+          for jackname in jacknames:
+            jackclients[jackname] = {
+              'name' : jackname,
+              'windowtitle' : windowtitle,
+              'layer' : layer,
+              'guitoload' : guitoload,
+              'sessionname' : sessionname,
+              'clientid' : clientid,
+              'port': port,
+              'clienttype' : clienttype,
+              'with_gui' : with_gui
+            }
     
     if self.Debug:
       print ('Updating ...')
+    
     self.lock.acquire()
+
     for name in jackclients:
       if name not in self.jackclients:
         self.jackclients[name] = jackclients[name]
+
     if self.Debug:
       print (self.jackclients)
     self.lock.release()
@@ -150,13 +207,13 @@ class GroupPropertiesHelper:
     if self.Debug:
       print ('>==== GroupPropertiesHelper:: updateProperties')
 
-  def checkRaySessionPort(self, sessionname, port):
-    cmd = ['ray_control','--port', str(port), 'get_session_path']
-    if self.Debug:
-      print(' '.join(cmd))
-    out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
-    result = out.splitlines()[0]
-    return result.endswith(sessionname)
+  #def checkRaySessionPort(self, sessionname, port):
+    #cmd = ['ray_control','--port', str(port), 'get_session_path']
+    #if self.Debug:
+      #print(' '.join(cmd))
+    #out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
+    #result = out.splitlines()[0]
+    #return result.endswith(sessionname)
   
   def __getPidFromRayControl(self, jackclientname):
     
