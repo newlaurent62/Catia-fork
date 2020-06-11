@@ -251,7 +251,7 @@ features.port_info    = False
 features.port_rename  = False
 features.handle_group_pos = False
 
-propertiesHelper = GroupPropertiesHelper(Debug=True)
+propertiesHelper = GroupPropertiesHelper()
 
 # Internal functions
 def bool2str(check):
