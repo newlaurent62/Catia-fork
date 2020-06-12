@@ -14,17 +14,13 @@ import traceback
 
 class GroupPropertiesHelper:
   
-  def __init__(self, _dir='/tmp/catia', Debug=False):
+  def __init__(self, Debug=True):
     self.sched = None
-    if not(os.path.isdir(_dir)):
-      os.makedirs(_dir)
-    self._dir = _dir
     self.session_path_by_port = {}
     self.jackclients = {}
     self.Debug = Debug
     self.layer_list = []
     self.lock = threading.Lock()
-    sessionpath = None
     try:      
       self.read_dir()
     except Exception as e:
@@ -61,23 +57,24 @@ class GroupPropertiesHelper:
     ports = self.get_list_daemons()
     if ports:
       for port in ports:
-        session_path = self.get_session_path(port)
-        if port not in self.session_path_by_port:
-          if session_path:
-            self.session_path_by_port[port] = session_path
-            self.updateProperties(port)
+        if port.isdigit():
+          session_path = self.get_session_path(port)
+          if port not in self.session_path_by_port:
+            if session_path:
+              self.session_path_by_port[port] = session_path
+              self.updateProperties(port)
+              if port in portsToRemove:
+                portsToRemove.remove(port)
+          elif self.session_path_by_port[port] != session_path:
+            if session_path:
+              self.removeProperties(port)
+              self.session_path_by_port[port] = session_path
+              self.updateProperties(port)
+              if port in portsToRemove:
+                portsToRemove.remove(port)
+          elif self.session_path_by_port[port] == session_path:
             if port in portsToRemove:
               portsToRemove.remove(port)
-        elif self.session_path_by_port[port] != session_path:
-          self.removeProperties(port)
-          if session_path:
-            self.session_path_by_port[port] = session_path
-            self.updateProperties(port)
-            if port in portsToRemove:
-              portsToRemove.remove(port)
-        elif self.session_path_by_port[port] == session_path:
-          if port in portsToRemove:
-            portsToRemove.remove(port)
           
     for port in portsToRemove:
       self.removeProperties(port)
@@ -94,8 +91,11 @@ class GroupPropertiesHelper:
       print(' '.join(cmd))
     try:
       out = subprocess.check_output(' '.join(cmd), shell=True, text=True)        
-      result = out.splitlines()
-      return result
+      if out.strip() == '':
+        return None
+      else:
+        result = out.splitlines()
+        return result
     except Exception as e:
       if self.Debug:
         traceback.print_exc()
@@ -121,7 +121,10 @@ class GroupPropertiesHelper:
   def get_session_path(self, port):
     try:
       sessionpath = subprocess.check_output(['ray_control', '--port', str(port), 'get_session_path'], text=True)
-      return sessionpath.strip()
+      if sessionpath.strip() == '':
+        return None
+      else:
+        return sessionpath.strip()
     except Exception as e:
       if self.Debug:
         traceback.print_exc()
@@ -264,68 +267,68 @@ class GroupPropertiesHelper:
       print ('final pid: %d' % pid)
     return pid
 
-  def __getPidFromFile(self, jackclientname):
+  #def __getPidFromFile(self, jackclientname):
     
-    if jackclientname not in self.jackclients:
-      if self.Debug:
-        print ('jackclientname not registered in properties: %s' % jackclientname)
-      return 0
+    #if jackclientname not in self.jackclients:
+      #if self.Debug:
+        #print ('jackclientname not registered in properties: %s' % jackclientname)
+      #return 0
     
-    sessionname = self.jackclients[jackclientname]['sessionname']
-    clientid = self.jackclients[jackclientname]['clientid']
+    #sessionname = self.jackclients[jackclientname]['sessionname']
+    #clientid = self.jackclients[jackclientname]['clientid']
     
     
-    if sessionname and clientid:
-      try:
-        with open(self._dir + os.sep + sessionname + '.' + clientid + '.pid') as f:
-          pid = int(f.read().strip())
-          return pid
-      except Exception as e:
-        print (e)
-        pass
-    return 0
+    #if sessionname and clientid:
+      #try:
+        #with open(self._dir + os.sep + sessionname + '.' + clientid + '.pid') as f:
+          #pid = int(f.read().strip())
+          #return pid
+      #except Exception as e:
+        #print (e)
+        #pass
+    #return 0
 
-  def updateSessionClosed(self, _file):
-    if self.Debug:
-      print ('<==== GroupPropertiesHelper:: updateSessionClosed')
-    with open(_file) as f:
-      values = os.path.basename(_file).split(".")
-      sessionname = values[0]
-      print ("sessionname:" + sessionname)
-      self.lock.acquire()
-      jackclienttoremove = []
-      for jackclientname in self.jackclients:
-        jackclient = self.jackclients[jackclientname]
-        if jackclient['sessionname'] == sessionname:
-          jackclienttoremove.append(jackclientname)
-          if self.Debug:
-            print ('%s removed.' % jackclientname)
+  #def updateSessionClosed(self, _file):
+    #if self.Debug:
+      #print ('<==== GroupPropertiesHelper:: updateSessionClosed')
+    #with open(_file) as f:
+      #values = os.path.basename(_file).split(".")
+      #sessionname = values[0]
+      #print ("sessionname:" + sessionname)
+      #self.lock.acquire()
+      #jackclienttoremove = []
+      #for jackclientname in self.jackclients:
+        #jackclient = self.jackclients[jackclientname]
+        #if jackclient['sessionname'] == sessionname:
+          #jackclienttoremove.append(jackclientname)
+          #if self.Debug:
+            #print ('%s removed.' % jackclientname)
       
-      for jackclientname in jackclienttoremove:
-        del self.jackclients[jackclientname]
+      #for jackclientname in jackclienttoremove:
+        #del self.jackclients[jackclientname]
 
-      self.lock.release()
-      try:
-        os.remove(_file)
-      except Exception as e:
-        print (e)
-        print('error during file remove %s' % pathfile)
+      #self.lock.release()
+      #try:
+        #os.remove(_file)
+      #except Exception as e:
+        #print (e)
+        #print('error during file remove %s' % pathfile)
         
-      fileList = glob.glob(self._dir + os.sep + sessionname + '.*.pid', recursive=False)
-      for pathfile in fileList:
-        try:
-          os.remove(pathfile)
-        except Exception as e:
-          print (e)
-          print('error during file remove %s' % pathfile)
+      #fileList = glob.glob(self._dir + os.sep + sessionname + '.*.pid', recursive=False)
+      #for pathfile in fileList:
+        #try:
+          #os.remove(pathfile)
+        #except Exception as e:
+          #print (e)
+          #print('error during file remove %s' % pathfile)
           
-        if self.Debug:
-          print ('  remove %s' % pathfile)
+        #if self.Debug:
+          #print ('  remove %s' % pathfile)
           
-      if self.Debug:
-        print (self.jackclients)
-    if self.Debug:
-      print ('>==== GroupPropertiesHelper:: updateSessionClosed')
+      #if self.Debug:
+        #print (self.jackclients)
+    #if self.Debug:
+      #print ('>==== GroupPropertiesHelper:: updateSessionClosed')
     
 
       
@@ -351,8 +354,8 @@ class GroupPropertiesHelper:
       # otherwise we get pid from pid Ray Control or from file
       if result == 0:
         result = self.__getPidFromRayControl(jackclientname)
-        if result == 0:
-          result = self.__getPidFromFile(jackclientname)
+        #if result == 0:
+          #result = self.__getPidFromFile(jackclientname)
         result = int(result)
       if self.Debug:
         print ('%s: %d (candidatepid: %d)' % (propertyname, result, candidatepid))
