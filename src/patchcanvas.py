@@ -220,7 +220,7 @@ class CanvasObject(QObject):
     def GroupContextMenuGoToApp(self):
         try:
             el = self.sender().data()
-            propertiesHelper.loadOrSwitchToApp(el['jackclientname'], el['winid'])
+            GroupPropertiesHelper.instance().loadOrSwitchToApp(el['jackclientname'], el['winid'])
         except:
             pass
 
@@ -250,8 +250,6 @@ features.group_go_to_app = False
 features.port_info    = False
 features.port_rename  = False
 features.handle_group_pos = False
-
-propertiesHelper = GroupPropertiesHelper()
 
 # Internal functions
 def bool2str(check):
@@ -359,13 +357,11 @@ def init(appName, scene, callback, debug=False):
     canvas.scene.updateTheme()
     
     canvas.initiated = True
-    
 
 def clear():
     if canvas.debug:
         qDebug("PatchCanvas::clear()")
 
-    propertiesHelper.stop()
     group_list_ids = []
     port_list_ids  = []
     connection_list_ids = []
@@ -2415,7 +2411,7 @@ class CanvasBox(QGraphicsItem):
 
         groupName = CanvasGetGroupName(self.m_group_id)
           
-        windowtitle_list = propertiesHelper.getWinIdsAndtitles(groupName)
+        windowtitle_list = GroupPropertiesHelper.instance().getWinIdsAndtitles(groupName)
         if len(windowtitle_list) > 1:
           goToWindowMenu = QMenu("Go to app", menu)
           

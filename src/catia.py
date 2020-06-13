@@ -23,6 +23,8 @@ import ui_catia
 from shared_canvasjack import *
 from shared_settings import *
 
+from properties_helper import GroupPropertiesHelper
+
 # ------------------------------------------------------------------------------------------------------------
 # Try Import DBus
 
@@ -98,6 +100,8 @@ URI_CANVAS_ICON = "http://kxstudio.sf.net/ns/canvas/icon"
 class CatiaMainW(AbstractCanvasJackClass):
     def __init__(self, parent=None):
         AbstractCanvasJackClass.__init__(self, "Catia", ui_catia.Ui_CatiaMainW, parent)
+        
+        GroupPropertiesHelper.instance()
 
         self.fGroupList      = []
         self.fGroupSplitList = []
@@ -1444,6 +1448,9 @@ if __name__ == '__main__':
     if gJack.client:
         jacklib.deactivate(gJack.client)
         jacklib.client_close(gJack.client)
+
+    
+    GroupPropertiesHelper.instance().stop()
 
     # Exit properly
     sys.exit(ret)

@@ -4,84 +4,100 @@ import glob
 import yaml
 import os
 import datetime as dt
-import threading 
 import subprocess
 import shlex
 import jack
 import re
 from pathlib import Path
 import traceback
+import threading
+import time
+
+_instance = None
 
 class GroupPropertiesHelper:
-  
+
+
   def __init__(self, Debug=True):
+    self.Debug = Debug
+    if self.Debug:
+      print('<==== GroupPropertiesHelper:: init')
+
     self.sched = None
     self.session_path_by_port = {}
     self.jackclients = {}
-    self.Debug = Debug
     self.layer_list = []
-    self.lock = threading.Lock()
-    try:      
-      self.read_dir()
-    except Exception as e:
-      if self.Debug:
-        print (e)
-      print ('Do you opened a Raysession document ?')
-            
-    self.eventStop = self.start(5)
-
-  def start(self,interval):
-    stopped = threading.Event()
-    def loop():
-      while not stopped.wait(interval): # the first call is in `interval` secs
-        try:          
-          self.read_dir()
-        except Exception as ex:
-          print(ex)
-            
-    t = threading.Thread(target=loop)
-    t.daemon = True
-    t.start()    
-    return stopped.set
+    self.lock = threading.Lock()            
+    self.executing = False
+    self.read_dir()
+    self.stopEvent = threading.Event()
+    self.thread = threading.Thread(target=self.run)
+    self.thread.start()
+    
+    if self.Debug:
+      print('>==== GroupPropertiesHelper:: init')
   
+  def run(self):
+    while not self.stopEvent.wait(5):
+      self.read_dir()
+      
+  @staticmethod
+  def instance():
+    global _instance
+    if not _instance:
+      _instance = GroupPropertiesHelper()      
+    return _instance
+
   def stop(self):
-    self.eventStop()
+    if self.Debug:
+      print ('GroupPropertiesHelper:: stop')
+    self.stopEvent.set()
   
   def read_dir(self):
-    if self.Debug:
-      print ('<==== GroupPropertiesHelper:: read_dir')
-    portsToRemove = []
-    for port in self.session_path_by_port:
-      portsToRemove.append(port)
-    
-    ports = self.get_list_daemons()
-    if ports:
-      for port in ports:
-        if port.isdigit():
-          session_path = self.get_session_path(port)
-          if port not in self.session_path_by_port:
-            if session_path:
-              self.session_path_by_port[port] = session_path
-              self.updateProperties(port)
-              if port in portsToRemove:
-                portsToRemove.remove(port)
-          elif self.session_path_by_port[port] != session_path:
-            if session_path:
-              self.removeProperties(port)
-              self.session_path_by_port[port] = session_path
-              self.updateProperties(port)
-              if port in portsToRemove:
-                portsToRemove.remove(port)
-          elif self.session_path_by_port[port] == session_path:
-            if port in portsToRemove:
-              portsToRemove.remove(port)
-          
-    for port in portsToRemove:
-      self.removeProperties(port)
+    if not self.executing:
+      self.executing = True
+      try:
+        if self.Debug:
+          print ('<==== GroupPropertiesHelper:: read_dir')
+        portsToRemove = []
+        for port in self.session_path_by_port:
+          portsToRemove.append(port)
+        
+        ports = self.get_list_daemons()
+        if ports:
+          for port in ports:
+            if port.isdigit():
+              session_path = self.get_session_path(port)
+                
+              if port not in self.session_path_by_port:
+                if session_path:
+                  self.session_path_by_port[port] = session_path
+                  self.updateProperties(port)
+                  if port in portsToRemove:
+                    portsToRemove.remove(port)
+              elif self.session_path_by_port[port] != session_path:
+                if session_path:
+                  self.removeProperties(port)
+                  self.session_path_by_port[port] = session_path
+                  self.updateProperties(port)
+                  if port in portsToRemove:
+                    portsToRemove.remove(port)
+              elif self.session_path_by_port[port] == session_path:
+                if port in portsToRemove:
+                  portsToRemove.remove(port)
 
-    for port in portsToRemove:
-      del self.session_path_by_port[port]
+        for port in portsToRemove:
+          self.removeProperties(port)
 
+        for port in portsToRemove:
+          del self.session_path_by_port[port]
+
+      except Exception as e:
+        if self.Debug:
+          traceback.print_exc()
+          print (e)
+      
+      self.executing = False
     if self.Debug:
       print ('>==== GroupPropertiesHelper:: read_dir')
             
@@ -524,14 +540,7 @@ class GroupPropertiesHelper:
 
 if __name__ == '__main__':
   
-  helper = GroupPropertiesHelper('/tmp/catia',Debug=True)
+  helper = GroupPropertiesHelper(Debug=True)
   
   input("Press Enter to quit...")
   helper.stop()
-  
-  print (str(helper.getProperty('jack_capture','windowtitle')))
-  print (str(helper.getProperty('jack_capture','layer')))
-
-  helper.loadOrSwitchToApp('system')
-  
-  helper.loadOrSwitchToApp('PulseAudio JACK Source')
