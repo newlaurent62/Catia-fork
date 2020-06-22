@@ -6,7 +6,7 @@ import os
 import datetime as dt
 import subprocess
 import shlex
-import jack
+#import jack
 import re
 from pathlib import Path
 import traceback
@@ -366,13 +366,13 @@ class GroupPropertiesHelper:
         
     if propertyname == 'pid':
       # try to get pid from jacklib
-      result = jack.client_pid(jackclientname)
+      #result = jack.client_pid(jackclientname)
       # otherwise we get pid from pid Ray Control or from file
-      if result == 0:
-        result = self.__getPidFromRayControl(jackclientname)
-        #if result == 0:
-          #result = self.__getPidFromFile(jackclientname)
-        result = int(result)
+      #if result == 0:
+      result = self.__getPidFromRayControl(jackclientname)
+      #if result == 0:
+        #result = self.__getPidFromFile(jackclientname)
+      result = int(result)
       if self.Debug:
         print ('%s: %d (candidatepid: %d)' % (propertyname, result, candidatepid))
       return result
