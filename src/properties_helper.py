@@ -29,7 +29,7 @@ class GroupPropertiesHelper:
     self.layer_list = []
     self.lock = threading.Lock()            
     self.executing = False
-    self.read_dir()
+    self.read_sessions()
     self.stopEvent = threading.Event()
     self.thread = threading.Thread(target=self.run)
     self.thread.start()
@@ -39,7 +39,7 @@ class GroupPropertiesHelper:
   
   def run(self):
     while not self.stopEvent.wait(5):
-      self.read_dir()
+      self.read_sessions()
       
   @staticmethod
   def instance():
@@ -53,12 +53,12 @@ class GroupPropertiesHelper:
       print ('GroupPropertiesHelper:: stop')
     self.stopEvent.set()
   
-  def read_dir(self):
+  def read_sessions(self):
     if not self.executing:
       self.executing = True
       try:
         if self.Debug:
-          print ('<==== GroupPropertiesHelper:: read_dir')
+          print ('<==== GroupPropertiesHelper:: read_sessions')
         portsToRemove = []
         for port in self.session_path_by_port:
           portsToRemove.append(port)
@@ -99,7 +99,7 @@ class GroupPropertiesHelper:
       
       self.executing = False
     if self.Debug:
-      print ('>==== GroupPropertiesHelper:: read_dir')
+      print ('>==== GroupPropertiesHelper:: read_sessions')
             
   def get_list_clients(self, port):
     cmd = ['ray_control','--port', str(port), 'list_clients']
